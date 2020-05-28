@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd">
+	<os:object-store name="daily_exchange_rates" doc:name="Object store" doc:id="31906708-c5a7-427b-ac17-fe2ffa1b18c1" />
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="3a188935-87c4-44da-b09c-c520accf55b4" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<flow name="ensure-exchange-rates-current" doc:id="02b783e4-05c1-416a-af6e-512942790c53" >
+		<http:listener doc:name="Listener" doc:id="87204836-ba75-4701-98da-de2d9a2476d8" config-ref="HTTP_Listener_config" path="ensure-exchange-rate-current"/>
+		<set-variable value="#[now() as Date]" doc:name="today" doc:id="d0772769-ae63-4b47-aada-4ea9ff8b1513" variableName="today"/>
+		<os:retrieve doc:name="Retrieve exchangeRateDate" doc:id="4c71a6f2-8b0d-467f-a7ce-1306cae6050f" objectStore="daily_exchange_rates" key="exchangeRateDate" target="exchangeRateDate" targetValue="#[payload as Date]">
+			<os:default-value ><![CDATA[#[(now() - |P10D|) as Date]]]></os:default-value>
+		</os:retrieve>
+		<choice doc:name="Choice" doc:id="dedb321f-da99-4754-a528-84d3fd5974cd" >
+			<when expression="#[daysBetween (vars.exchangeRateDate, vars.today) &gt; 1]">
+				<flow-ref doc:name="cache-exchange-rates" doc:id="f7cf3295-6958-4ecc-aa10-75653cade8bc" name="cache-exchange-rates"/>
+			</when>
+		</choice>
+	</flow>
+	<flow name="clear-exchange-rates" doc:id="126ce961-b5f0-4de8-a461-d59f8f8b0979" >
+		<http:listener doc:name="Listener" doc:id="a10207a8-093f-457f-973e-002846364734" config-ref="HTTP_Listener_config" path="clear-exchange-rates"/>
+		<os:clear doc:name="Clear exchange rates" doc:id="925b8917-3f0b-4fc2-b3fe-6e3aada9f441" objectStore="daily_exchange_rates"/>
+	</flow>
+	<flow name="cache-exchange-rates" doc:id="431438e5-1d96-40e8-9183-79f00aafd75e" >
+		<scheduler doc:name="Every day at 18:00" doc:id="7dfaab8e-2dc3-4985-bbb8-6d572538b909" >
+			<scheduling-strategy >
+				<cron expression="0 0 18 ? * * *" timeZone="CET" />
+			</scheduling-strategy>
+		</scheduler>
+		<http:request method="GET" doc:name="GET exchange rates" doc:id="51dc76a1-e938-4fce-958e-20e09f92c965" url="https://api.exchangeratesapi.io/latest?base=EUR"/>
+		<ee:transform doc:name="Map payload and exchangeRateDate" doc:id="2066b707-2a78-45fb-a210-8a0f267f9a2a">
+			<ee:message>
+				<ee:set-payload><![CDATA[%dw 2.0
+output application/java
+---
+payload.rates pluck (value, key) -> {currency: key, rate: value}]]></ee:set-payload>
+			</ee:message>
+			<ee:variables>
+				<ee:set-variable variableName="exchangeRateDate"><![CDATA[%dw 2.0
+output application/java
+---
+payload.date as Date]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<foreach doc:name="For Each" doc:id="2f8fe440-a706-495e-a978-9227ebf4166c" collection="payload">
+			<logger level="DEBUG" doc:name="Logger" doc:id="e33addaf-8ae8-43cd-a5fa-35cc36fe0b8f" message='#["1 EUR = " ++ payload.rate ++ " " ++ payload.currency]'/>
+			<os:store doc:name="Store exchange rate" doc:id="886c8c7d-6d45-4074-93cb-1f0ce6f389e5" objectStore="daily_exchange_rates" key="#[payload.currency]">
+				<os:value ><![CDATA[#[payload.rate]]]></os:value>
+			</os:store>
+		</foreach>
+		<os:store doc:name="Store exchangeRateDate" doc:id="f7ab21f8-85b2-4cdb-a273-cb2f175f7af7" key="exchangeRateDate" objectStore="daily_exchange_rates">
+			<os:value ><![CDATA[#[vars.exchangeRateDate]]]></os:value>
+		</os:store>
+		<logger level="INFO" doc:name="Logger" doc:id="3d0a0096-1a4e-4d07-bf9d-bc95398bca3d" message='#["exchange rates loaded for " ++ sizeOf(payload) ++ " currencies"]'/>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="816fbbe1-b611-48fd-935d-3e1aae4fca94" type="ANY">
+				<logger level="ERROR" doc:name="Logger" doc:id="d703e587-9899-425f-8f38-b9b743579cb5" message='#["Could not load exchange rates. Error details: \n" ++ error.detailedDescription]'/>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+</mule>

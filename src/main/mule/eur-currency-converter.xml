@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:validation="http://www.mulesoft.org/schema/mule/validation" xmlns:os="http://www.mulesoft.org/schema/mule/os"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd
+http://www.mulesoft.org/schema/mule/validation http://www.mulesoft.org/schema/mule/validation/current/mule-validation.xsd">
+	<flow name="eur-currency-converter" doc:id="137f7b80-398a-40fb-be31-c1788bdcfb21" >
+		<http:listener doc:name="Listener" doc:id="954885b8-506b-4412-8914-1d572f8181e7" config-ref="HTTP_Listener_config" path="/currency-converter" >
+			<http:response statusCode="#[vars.returnCode]" />
+		</http:listener>
+		<flow-ref doc:name="Flow Reference" doc:id="5b9f7bfe-92e8-4a4e-ab98-8dc078cb6dc5" name="validate-inputs"/>
+		<flow-ref doc:name="ensure-exchange-rates-current" doc:id="fbb9ff5a-9daf-4d36-8f04-475ce3230850" name="ensure-exchange-rates-current" />
+		<choice doc:name="Currency" doc:id="f35e0238-b366-450f-9a4e-7591c2f6774d" >
+			<when expression='#[vars.currency == "EUR"]' >
+				<ee:transform doc:name="Map response for EUR currency" doc:id="2a820263-bba8-4b95-8185-e0e7188ed194" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	amount: vars.amount,
+	currency: vars.currency,
+	amountEUR: vars.amount
+}]]></ee:set-payload>
+					</ee:message>
+				</ee:transform>
+			</when>
+			<otherwise >
+				<os:retrieve doc:name="Get exchange rate" doc:id="8752f410-49ae-430f-92b3-4e2da1a5f328" key="#[vars.currency]" objectStore="daily_exchange_rates" target="exchangeRate" targetValue="#[payload as Number]" />
+				<ee:transform doc:name="Map Response for other currencies" doc:id="0faeb603-2d0d-47ba-a8de-3e5226ff6e09" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{
+	amount: vars.amount,
+	currency: vars.currency,
+	amountEUR: ( vars.amount / vars.exchangeRate ) as String {format: "#.##"} as Number
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="currency" ><![CDATA[%dw 2.0
+output application/java
+---
+message.attributes.queryParams.currency]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</otherwise>
+		</choice>
+		<error-handler >
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="a9273817-68e6-46a2-b23e-cdfb6f8f1675" type="OS:INVALID_KEY, OS:KEY_NOT_FOUND, OS:STORE_NOT_AVAILABLE" >
+				<ee:transform doc:name="Transform Message" doc:id="6416ba05-4d37-4e2b-b389-3a88f482125a" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{  error: "currency $(vars.currency default "UNKNOWN") could not be found"
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="returnCode" ><![CDATA[%dw 2.0
+output application/java
+---
+"500"]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+			<on-error-continue enableNotifications="true" logException="true" doc:name="On Error Continue" doc:id="9ce11c71-a8c7-4a5b-a40d-8f844fddcba6" type="VALIDATION:INVALID_NUMBER, VALIDATION:NULL">
+				<ee:transform doc:name="Transform Message" doc:id="c69b507e-0f03-46e8-95d4-53e95ce37898" >
+					<ee:message >
+						<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+{  error: error.description
+}]]></ee:set-payload>
+					</ee:message>
+					<ee:variables >
+						<ee:set-variable variableName="returnCode" ><![CDATA[%dw 2.0
+output application/java
+---
+"400"]]></ee:set-variable>
+					</ee:variables>
+				</ee:transform>
+			</on-error-continue>
+		</error-handler>
+	</flow>
+	<flow name="validate-inputs" doc:id="24c54c19-e7e0-4f8f-bc7e-478f81bf9853" >
+		<validation:is-not-null doc:name="currency is not null" doc:id="d5d47bb2-f5fc-4726-a3cb-85c09c64c89c" value="#[message.attributes.queryParams.currency]" message='#["currency query parameter is mandatory"]' />
+		<validation:is-not-null doc:name="amount Is not null" doc:id="33c1d035-5754-4edf-9f80-39493c6c0922" value="#[message.attributes.queryParams.amount]" message='#["amount is a required query parameter"]' />
+		<validation:is-number numberType="DOUBLE" doc:name="amount Is number" doc:id="f4259b72-27d8-40c5-a394-12b26c37f1e7" value="#[message.attributes.queryParams.amount]" message='#["The amount query parameter must be a number"]' />
+		<ee:transform doc:name="Set amount and currency" doc:id="e349f0f1-186f-4d58-a211-a3610e89e7ab">
+			<ee:variables>
+				<ee:set-variable variableName="currency"><![CDATA[%dw 2.0
+output application/java
+---
+message.attributes.queryParams.currency]]></ee:set-variable>
+				<ee:set-variable variableName="amount"><![CDATA[%dw 2.0
+output application/java
+---
+message.attributes.queryParams.amount as Number]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+	</flow>
+</mule>

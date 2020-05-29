@@ -29,7 +29,7 @@ output application/json
 				</ee:transform>
 			</when>
 			<otherwise >
-				<os:retrieve doc:name="Get exchange rate" doc:id="8752f410-49ae-430f-92b3-4e2da1a5f328" key="#[vars.currency]" objectStore="daily_exchange_rates" target="exchangeRate" targetValue="#[payload as Number]" />
+				<os:retrieve doc:name="Get exchange rate" doc:id="8752f410-49ae-430f-92b3-4e2da1a5f328" key='#["CURRENCY-" ++ (vars.currency default "")]' target="exchangeRate" targetValue="#[payload as Number]" />
 				<ee:transform doc:name="Map Response for other currencies" doc:id="0faeb603-2d0d-47ba-a8de-3e5226ff6e09" >
 					<ee:message >
 						<ee:set-payload ><![CDATA[%dw 2.0
